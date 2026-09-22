@@ -69,7 +69,7 @@ costs one blit per frame rather than a re-render of every bar.*
 | Motion vectors | Macroblock grid |
 |---|---|
 | ![Motion vectors](docs/motion-vectors.png) | ![Macroblock grid](docs/macroblock-grid.png) |
-| Every block is matched against both neighbours and the better match wins; **green** = matched the previous frame, **magenta** = the next, and the arrows point the way the content travels. The banner reports the vector count and the split, the legend the peak length in source pixels. | The encoder's 16×16 block boundaries at their **real pitch**, with the blocks whose edges stand out washed amber — a seam the encoder failed to hide. |
+| Every block is matched against both neighbours and the better match wins; **green** = matched the previous frame, **magenta** = the next, and the arrows point the way the content travels. The banner reports the vector count and the split, the legend the peak length in source pixels. | The encoder's 16×16 block boundaries at their **real pitch**, with the blocks whose edges stand out washed amber — a seam the encoder failed to hide. The legend counts how many of the frame's blocks were flagged. |
 
 The **block-noise** overlay dots the blocks that carry detail, and the macroblock grid
 deliberately does not appear over the motion vectors: the arrows already show the block
