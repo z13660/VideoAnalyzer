@@ -1,0 +1,28 @@
+# build output
+bin/
+obj/
+
+# bundled ffmpeg toolchain (~300 MB) — supply it yourself, see README
+tools/ffmpeg/
+tools/*.zip
+
+# generated icon preview
+
+# local test media
+samples/
+*.mp4
+*.mkv
+*.mov
+
+# verification screenshots and logs
+_verify/
+*.log
+app_preview.png
+
+# publish output
+publish/
+
+# IDE
+.vs/
+.idea/
+*.user

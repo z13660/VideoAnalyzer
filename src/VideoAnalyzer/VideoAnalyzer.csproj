@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <LangVersion>12.0</LangVersion>
+    <AssemblyName>VideoAnalyzer</AssemblyName>
+    <RootNamespace>VideoAnalyzer</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>VideoAnalyzer</Product>
+    <Description>Frame-accurate video stream analyzer (QCTools style) built on ffmpeg.</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ApplicationDefinition Include="App.xaml" SubType="Designer" Generator="MSBuild:Compile" />
+    <!-- the same artwork as a resource, so the window can use it for its title bar -->
+    <Resource Include="app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="tools\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    Ship the bundled ffmpeg build next to the executable when it is present, so a
+    published copy is self contained. `dotnet build` stays fast because the 300 MB of
+    binaries only travel on publish.
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffmpeg.exe')">
+    <FfmpegPayload Include="$(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffmpeg.exe;
+                             $(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffprobe.exe">
+      <Link>tools\ffmpeg\bin\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </FfmpegPayload>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,228 @@
+# VideoAnalyzer
+
+**Windows 上的逐帧视频码流分析工具** —— 它解码一个文件，为每一帧建立编码侧的记录，再把这份记录画成
+一组互相同步的图表，压缩与母版处理的问题一眼就能看出来。思路参考
+[QCTools](https://bavc.github.io/qctools/)，底层全部走 **ffmpeg**。
+
+[English](README.md) | **简体中文**
+
+![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%20%2F%2011-0078D4)
+![.NET](https://img.shields.io/badge/.NET-8.0-512BD4)
+![ffmpeg](https://img.shields.io/badge/ffmpeg-%E5%BF%85%E9%9C%80-2E7D32)
+![依赖](https://img.shields.io/badge/%E7%AC%AC%E4%B8%89%E6%96%B9%E4%BE%9D%E8%B5%96-%E6%97%A0-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
+![VideoAnalyzer](docs/overview.png)
+
+---
+
+## 这是什么
+
+一个视频文件，本质上是一连串编码器决策：每一帧分到多少比特、哪些帧是关键帧、量化器花在了哪里、
+哪些块是从哪里预测来的。这些决策在你看画面的时候完全不可见，但画面出问题时，要看的恰恰就是它们。
+
+VideoAnalyzer 把它们显式地画出来。选一个文件，它分阶段解码——容器、包表、图像类型、量化器、运动——
+每一阶段一有结果立刻发布。**选完文件约 0.4 秒就能开始播放，剩下的分析在后台继续跑**，图表在播放过程中
+逐渐填充。
+
+所有解码、探测和分析都通过 ffmpeg 完成，所以 ffmpeg 能读的文件这个工具就能分析。整个程序是纯
+.NET 8 + WPF，**没有任何第三方库**。
+
+---
+
+## 功能
+
+| | |
+|---|---|
+| **六条同步图表** | 码率、图像类型、QP、运动、GOP 位置、重排序距离，共用一条时间轴和同一个播放头 |
+| **固定播放头** | 播放头钉在正中，数据在它下面滚动，观看时它下面的数值不会跑掉 |
+| **逐帧精确播放** | 通过 ffmpeg `rawvideo` 管道解到 `WriteableBitmap`，可以逐帧步进，不受 `MediaElement` 限制 |
+| **分析叠加层** | 运动矢量、块噪声点阵、宏块网格，直接画在画面上 |
+| **拖动预览** | 拖动时立即显示预建缩略图条里的对应帧，松手才真正执行一次 seek |
+| **音频** | 原始 PCM 经 `waveOut` 输出，软件调音量，实测音画偏移约 0.2 秒 |
+| **实时帧信息** | 播放头所在帧的类型、大小、QP、运动、GOP 位置、重排序差值与各类标志 |
+| **全屏** | 双击画面即把整个窗口让给视频 |
+
+### 图表堆叠
+
+![图表区](docs/timeline-zoomed.png)
+
+*放大之后：播放头固定在正中，数据在它下面滚动，时间刻度只在素材实际存在的区间打标签。每一行由两层
+缓存绘制，所以滚动时每帧只需一次位图贴图，而不需要重画上千根柱子。*
+
+| 行 | 内容 |
+|---|---|
+| **BITRATE** | 每帧比特数（log₂ 刻度）与整段均值；关键帧画得更亮 |
+| **FRAME TYPE** | 每种图像类型（I / P / B）一条泳道，关键帧用竖线标出 |
+| **QP** | 量化器：均值画成折线，每帧的 min–max 画成色带 |
+| **MOTION** | 每帧运动矢量平均长度，以及前向 / 后向占比 |
+| **GOP** | 距上一个关键帧的帧数——每个 GOP 的形状 |
+| **REORDER** | PTS−DTS（帧），基线处标出损坏 / 丢弃 / 隔行 / 重复等标志 |
+
+### 叠加层
+
+| 运动矢量 | 宏块网格 |
+|---|---|
+| ![运动矢量](docs/fullscreen.png) | ![宏块网格](docs/macroblock-grid.png) |
+| 每个块都与前后两帧分别匹配；**绿色** = 与前一帧匹配更好，**洋红** = 与后一帧匹配更好，箭头指向内容运动的方向。 | 按**真实** 16×16 宏块间距画出的编码器块边界，并把「边缘明显比内部陡」的块染成琥珀色——那是编码器没藏住的块缝。 |
+
+**块噪声**叠加层在细节较多的块上打点；运动矢量模式下**故意不画网格**——箭头本身已经表达了块结构，
+网格只会让箭头更难读。
+
+---
+
+## 分析流水线
+
+每个阶段一有结果就发布，所以远在分析结束之前程序就可以用了。
+
+| 阶段 | 耗时（60 秒 1080p） | 产出 |
+|---|---|---|
+| 1. 探测 | ~0.4 秒 | 信息面板、传输控制 |
+| 2. 包表扫描 | ~0.7 秒 | 码率、GOP、重排序 |
+| 3. 图像类型 + QP | ~12 秒 | 图像类型、QP |
+| 4. 运动场 | ~17 秒 | 运动图表、矢量叠加 |
+
+1. **探测** —— `ffprobe -show_format -show_streams`：容器、编码、分辨率、帧率、色彩标签、
+   SAR/DAR、音频布局。
+2. **包表扫描** —— `ffprobe -show_packets` 不解码，直接读容器的包表：大小、pts、dts，以及
+   关键 / 丢弃 / 损坏标志。关键帧在这里先被标为 I 帧，其余类型等第 3 阶段。
+3. **图像类型 + QP** —— 一次 `ffmpeg -debug qp` 解码同时拿到每帧的图像类型（包表里没有）和真实的
+   逐宏块量化器。ffmpeg 无法导出该数据的编码，则用每像素比特数估算，并在界面上标 `(est.)`。
+4. **运动** —— 解码器确实提供矢量时用 `-debug mv` 输出，否则用内置块匹配器：把片子解成 320 像素宽的
+   灰度流，每个 8×8 块用预测式螺旋 SAD 搜索与前后两帧分别匹配。
+
+第 3、4 阶段**同时运行**——两个独立解码器，写的是每帧记录里不同的字段——所以深挖阶段的耗时是两者中
+较慢的那个，而不是两者之和。两者都是边算边发布，所以分析还在跑的时候图表就已经在长了。
+
+---
+
+## 环境要求
+
+* **Windows 10 / 11**（x64）
+* **.NET 8 桌面运行时** —— [下载](https://dotnet.microsoft.com/download/dotnet/8.0)
+* **ffmpeg 与 ffprobe**，任意较新版本 —— [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 或
+  [BtbN 构建](https://github.com/BtbN/FFmpeg-Builds/releases)
+
+ffmpeg 按以下顺序查找，满足任意一条即可：
+
+1. 环境变量 `FFMPEG_HOME`
+2. 可执行文件同级的 `tools\ffmpeg\bin\`，或向上最多九层目录中的同名路径
+3. `PATH` 中的任意目录
+4. 常见安装位置（`C:\ffmpeg\bin`、chocolatey、WinGet 链接）
+
+都找不到时，启动会弹出文件选择框让你指定。最省事的做法是把下载的构建解压到
+`VideoAnalyzer.exe` 同级的 `tools\ffmpeg\bin\` 里。
+
+---
+
+## 开始使用
+
+```bash
+git clone https://github.com/z13660/VideoAnalyzer.git
+cd VideoAnalyzer
+./build.sh              # 或：cd src/VideoAnalyzer && dotnet build
+```
+
+然后运行 `src/VideoAnalyzer/bin/Debug/net8.0-windows/VideoAnalyzer.exe [视频文件]`。
+
+要产出可分发的副本：
+
+```bash
+dotnet publish src/VideoAnalyzer -c Release -r win-x64 --self-contained false -o publish
+```
+
+> **为什么需要 `build.sh`。** 本项目开发时所用的 agent shell 启动时环境变量不全：NuGet 通过
+> `PROGRAMFILES(X86)` / `PROGRAMFILES` 解析机器级配置，缺了它们 restore 会以
+> `Value cannot be null. (Parameter 'path1')` 失败。脚本在调用 `dotnet` 前补齐这些变量。
+> 在普通终端里直接 `dotnet build` 即可，不需要它。
+
+---
+
+## 操作
+
+| 按键 | 作用 |
+|---|---|
+| `Ctrl+O` | 打开视频（也可以把文件拖进窗口，或用命令行参数传入） |
+| `Space` | 播放 / 暂停 |
+| `←` / `→` | 上一帧 / 下一帧 |
+| `Ctrl+←` / `Ctrl+→` | 上一个 / 下一个关键帧 |
+| `↑` / `↓` | 音量加减 |
+| `Ctrl+M` | 静音 |
+| `Ctrl+L` | 循环播放开关 |
+| `Home` / `End` | 跳到片头 / 片尾 |
+| `Ctrl+0` | 缩放到整段素材 |
+| `+` / `-` | 时间轴缩放 |
+| `Esc` | 退出全屏 |
+
+| 鼠标 | 作用 |
+|---|---|
+| 点击图表或时间轴 | 跳到点击处的时间 |
+| 拖动图表或时间轴 | 擦洗——抓住条带拖动，内容跟着光标走 |
+| 在图表或时间轴上滚轮 | 以光标位置为中心缩放 |
+| 双击画面 | 全屏；再双击或按 `Esc` 退出 |
+
+播放到末尾后再按播放会从头开始；播放中跳转会继续保持播放。
+
+---
+
+## 目录结构
+
+```
+src/VideoAnalyzer/
+  App.xaml(.cs)              程序入口
+  MainWindow.xaml(.cs)       布局、传输控制、键盘、拖放、全屏
+  Models/                    MediaInfo、FrameInfo、AnalysisResult、MotionField
+  Services/
+    FfmpegLocator.cs         定位 ffmpeg 工具链并读取版本
+    MediaProbeService.cs     容器 / 流元数据
+    PacketScanService.cs     包表扫描
+    DeepAnalysisService.cs   QP + 运动两趟分析，估算兜底
+    MotionEstimator.cs       内置块匹配器
+    BlockAnalysis.cs         块活动度、块缝比值、块效应度量
+    VideoPlaybackEngine.cs   rawvideo 管道播放、逐帧精确定位
+    AudioPlayer.cs           PCM 经 waveOut 输出
+    Filmstrip.cs             擦洗预览用的缩略图条
+    AnalysisService.cs       流水线编排
+  Controls/
+    FrameGraph.cs            带缓存的图表绘制（6 种）
+    TimelineStrip.cs         时间刻度 + 播放头
+    VideoSurface.cs          画面 + 叠加层
+  ViewModels/MainViewModel.cs
+  Themes/Dark.xaml
+tools/                       验证与截图辅助脚本（Python）
+```
+
+## 设计要点
+
+* **播放头固定，视图不夹取。** 要让播放头在首帧和末帧也保持在正中，就必须显示首帧之前、末帧之后的
+  时间；时间刻度只在素材结束处停止打标签，所以空白区不会让人误以为文件比实际更长。
+* **图表分两层缓存。** 静态层（背景、标题、轴标签）只随行尺寸或数据变化；数据层按视图两端各外扩
+  40% 的跨度预渲染，再按设备像素对齐贴图。于是滚动播放头每帧只花一次贴图，只有视图走满外扩量才重建。
+* **帧按时间摆放，而不是按序号。** 每帧的标记位置由它自己的显示时间决定，所以视图超出素材末尾时留白，
+  而不是把数据拉伸铺满。
+* **画面是自己画的。** `MediaElement` 不支持逐帧步进和叠加层，所以解码走 ffmpeg `rawvideo` 管道
+  进 `WriteableBitmap`；定位时用输入侧 `-ss` 重启 ffmpeg，会落到前一个关键帧再丢弃到目标位置。
+* **拖动只预览，松手才定位。** 一次定位要重启解码器，所以拖动时只从约 240 帧的缩略图条里取最近的
+  一张显示，松手时只执行一次真正的定位。
+* **播放结束由解码器判定，而不是帧序号。** 容器的包表可能比解码器实际输出的帧多，否则传输控制会卡在
+  「播放中」停在最后一帧。
+* **流式更新做合并。** 流水线从后台线程成批发布，窗口每秒最多刷新约 8 次，快速的分析不会把界面饿死。
+* **音频设备预热。** 首次打开 `waveOut` 流约需 1.5 秒；文件一载入就先喂静音，把首次播放的延迟降到与
+  后续播放相同的约 0.2 秒。
+
+## 已知限制
+
+* QP 只在 ffmpeg `-debug qp` 支持的编码上是解码器精确值，其余为估算值，界面会标注。
+* 内置运动估计器是真正的块匹配，不是编码器自身的决策，所以在平坦的合成画面上矢量接近零是正常的。
+* 每帧都保留完整运动场（320 像素宽、8 像素块时约 2.6 KB/帧），缩略图条约 240 帧，所以长片分析期间会
+  占用几十 MB 内存。
+* 音频固定按 48 kHz 立体声 16 位解码，且**没有音频分析**——没有响度或电平表，只有播放。
+* 仅支持 Windows：播放引擎、音频输出和窗口外观都依赖 Win32 / WPF。
+
+## 许可证
+
+MIT —— 见 [LICENSE](LICENSE)。
+
+---
+
+[English](README.md) | **简体中文**

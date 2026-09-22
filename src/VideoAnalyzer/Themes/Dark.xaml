@@ -1,0 +1,350 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============================== palette ==============================
+         A slightly blue-shifted dark ramp. The video pane stays pure black so the
+         picture reads correctly, while the chrome sits a step above it. -->
+    <SolidColorBrush x:Key="WindowBack" Color="#0E1116" />
+    <SolidColorBrush x:Key="PanelBack" Color="#131820" />
+    <SolidColorBrush x:Key="CardBack" Color="#19202A" />
+    <SolidColorBrush x:Key="CardHover" Color="#1F2833" />
+    <SolidColorBrush x:Key="RailBack" Color="#11151C" />
+    <SolidColorBrush x:Key="LineBrush" Color="#222B36" />
+    <SolidColorBrush x:Key="LineSoftBrush" Color="#1A2129" />
+
+    <!-- Row divider for the graph stack. Dotted rather than solid: a continuous line across a
+         strip of dense one-pixel bars reads as data, a dotted one reads as chrome. -->
+    <DrawingBrush x:Key="DottedDivider" TileMode="Tile" Stretch="None"
+                  Viewport="0,0,4,1" ViewportUnits="Absolute">
+        <DrawingBrush.Drawing>
+            <GeometryDrawing Brush="{StaticResource LineSoftBrush}">
+                <GeometryDrawing.Geometry>
+                    <RectangleGeometry Rect="0,0,2,1" />
+                </GeometryDrawing.Geometry>
+            </GeometryDrawing>
+        </DrawingBrush.Drawing>
+    </DrawingBrush>
+
+    <SolidColorBrush x:Key="TextBrush" Color="#E6EBF2" />
+    <SolidColorBrush x:Key="MutedBrush" Color="#8792A4" />
+    <SolidColorBrush x:Key="LabelBrush" Color="#98A3B5" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#5B9BFF" />
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="#2A3A55" />
+    <SolidColorBrush x:Key="WarnBrush" Color="#E8C050" />
+
+    <FontFamily x:Key="MonoFont">Consolas, Cascadia Mono, Courier New</FontFamily>
+    <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif</FontFamily>
+
+    <!-- Focus mark for the toolbar controls. WPF's stock focus visual is a dotted rectangle drawn
+         for a light UI; on this background it reads as a rendering artefact (it looked like the
+         volume slider was broken). A soft accent ring says the same thing in the palette. -->
+    <Style x:Key="ControlFocusVisual">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate>
+                    <Rectangle Stroke="{StaticResource AccentSoftBrush}" StrokeThickness="1"
+                               RadiusX="4" RadiusY="4" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================ transport icons ============================
+         Drawn as geometry rather than glyphs: the symbol fonts disagree about which
+         codepoints exist, and a step-frame icon is not in any of them anyway. -->
+    <PathGeometry x:Key="IcoPlay" Figures="M 0,0 L 11,6.5 L 0,13 Z" />
+    <PathGeometry x:Key="IcoPause" Figures="M 0,0 L 3.8,0 L 3.8,13 L 0,13 Z M 6.6,0 L 10.4,0 L 10.4,13 L 6.6,13 Z" />
+
+    <!-- |◀ and ▶| : one frame at a time -->
+    <PathGeometry x:Key="IcoStepBack" Figures="M 0,0 L 2,0 L 2,13 L 0,13 Z M 11,0 L 11,13 L 3.4,6.5 Z" />
+    <PathGeometry x:Key="IcoStepFwd" Figures="M 0,0 L 7.6,6.5 L 0,13 Z M 8.8,0 L 11,0 L 11,13 L 8.8,13 Z" />
+
+    <!-- |◀◀ and ▶▶| : the ends of the clip -->
+    <PathGeometry x:Key="IcoStart" Figures="M 0,0 L 2,0 L 2,13 L 0,13 Z M 6.6,0 L 6.6,13 L 2.8,6.5 Z M 12.4,0 L 12.4,13 L 8.6,6.5 Z" />
+    <PathGeometry x:Key="IcoEnd" Figures="M 0,0 L 3.8,6.5 L 0,13 Z M 5.6,0 L 9.4,6.5 L 5.6,13 Z M 11,0 L 13,0 L 13,13 L 11,13 Z" />
+
+    <!-- key frames: the diamond is the standard keyframe mark -->
+    <PathGeometry x:Key="IcoKeyPrev" Figures="M 2,6.5 L 5,3.5 L 8,6.5 L 5,9.5 Z M 13.4,0 L 13.4,13 L 9.6,6.5 Z" />
+    <PathGeometry x:Key="IcoKeyNext" Figures="M 0.6,0 L 0.6,13 L 4.4,6.5 Z M 8,6.5 L 11,3.5 L 14,6.5 L 11,9.5 Z" />
+
+    <!-- repeat: a near-full circle with an arrow head, the usual "loop" mark -->
+    <PathGeometry x:Key="IcoLoop" Figures="M 2,6.5 A 5,5 0 1 1 7,11.5 M 0.6,7.8 L 4.6,7.8 L 2.6,2.9 Z" />
+
+    <!-- fit to window: four corner brackets -->
+    <PathGeometry x:Key="IcoFit" Figures="M 0,0 L 4.5,0 L 4.5,1.8 L 1.8,1.8 L 1.8,4.5 L 0,4.5 Z M 8.5,0 L 13,0 L 13,4.5 L 11.2,4.5 L 11.2,1.8 L 8.5,1.8 Z M 0,8.5 L 1.8,8.5 L 1.8,11.2 L 4.5,11.2 L 4.5,13 L 0,13 Z M 11.2,8.5 L 13,8.5 L 13,13 L 8.5,13 L 8.5,11.2 L 11.2,11.2 Z" />
+
+    <!-- audio: a speaker cone, with a wave or a cross -->
+    <PathGeometry x:Key="IcoVolume" Figures="M 0,4.6 L 3.2,4.6 L 7,1.3 L 7,11.7 L 3.2,8.4 L 0,8.4 Z M 9.3,4.4 A 3.2,3.2 0 0 1 9.3,8.6 M 11.6,2.2 A 6.2,6.2 0 0 1 11.6,10.8" />
+    <PathGeometry x:Key="IcoMute" Figures="M 0,4.6 L 3.2,4.6 L 7,1.3 L 7,11.7 L 3.2,8.4 L 0,8.4 Z M 9.4,4.2 L 13.4,8.2 M 13.4,4.2 L 9.4,8.2" />
+
+    <!-- toolbar toggles -->
+    <PathGeometry x:Key="IcoPin" Figures="M 6.5,0.6 L 6.5,12.4 M 0.8,6.5 L 12.2,6.5 M 6.5,4.3 A 2.2,2.2 0 1 1 6.4,4.3 Z" />
+    <PathGeometry x:Key="IcoMotion" Figures="M 0.5,6.5 L 3.4,6.5 L 5.2,2.2 L 7.6,11 L 9.4,6.5 L 12.5,6.5" />
+
+    <!-- overlay: stacked layers -->
+
+    <!-- ============================== text ============================== -->
+    <Style x:Key="MonoText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+    </Style>
+
+    <Style x:Key="InfoLabel" TargetType="TextBlock" BasedOn="{StaticResource MonoText}">
+        <Setter Property="Foreground" Value="{StaticResource LabelBrush}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Margin" Value="0,0,8,0" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+
+    <Style x:Key="InfoValue" TargetType="TextBlock" BasedOn="{StaticResource MonoText}">
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="TextWrapping" Value="NoWrap" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style x:Key="Caption" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- ============================ buttons ============================ -->
+    <Style x:Key="ToolButton" TargetType="Button">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisual}" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Background" Value="{StaticResource CardBack}" />
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="12,5" />
+        <Setter Property="Margin" Value="0,0,8,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6">
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CardHover}" />
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="#33404F" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#26313E" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.4" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ===================== icon-only transport buttons =====================
+         Borderless until hovered, like an NLE transport bar: the icons carry the
+         meaning, so chrome around them would only add noise. -->
+    <Style x:Key="TransportButton" TargetType="Button">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisual}" />
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="Margin" Value="0,0,2,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="5">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CardHover}" />
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="#33404F" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#26313E" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.32" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- the primary action keeps a filled accent so it reads as the default -->
+    <Style x:Key="TransportPlayButton" TargetType="Button" BasedOn="{StaticResource TransportButton}">
+        <Setter Property="Width" Value="42" />
+        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+        <Setter Property="BorderBrush" Value="#3E5C8A" />
+    </Style>
+
+    <Style x:Key="TransportIcon" TargetType="Path">
+        <Setter Property="Fill" Value="#C6D2E2" />
+        <Setter Property="Stretch" Value="None" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!--
+      Icons whose geometry is open (lines, arcs, outlines) must be stroked, not filled: a
+      filled open subpath renders as the sliver between its endpoints, which turns a speaker
+      cone with sound waves into a solid blob.
+    -->
+    <Style x:Key="StrokeIcon" TargetType="Path">
+        <Setter Property="Fill" Value="Transparent" />
+        <Setter Property="Stroke" Value="#C6D2E2" />
+        <Setter Property="StrokeThickness" Value="1.5" />
+        <Setter Property="StrokeLineJoin" Value="Round" />
+        <Setter Property="StrokeStartLineCap" Value="Round" />
+        <Setter Property="StrokeEndLineCap" Value="Round" />
+        <Setter Property="Stretch" Value="None" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="TransportIconAccent" TargetType="Path" BasedOn="{StaticResource TransportIcon}">
+        <Setter Property="Fill" Value="#DCE9FF" />
+    </Style>
+
+    <!-- toggle buttons that light up when on, used for the mode switches on the right -->
+    <Style x:Key="ToggleButton" TargetType="Button" BasedOn="{StaticResource TransportButton}">
+        <Setter Property="Width" Value="32" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="Margin" Value="0,0,3,0" />
+    </Style>
+
+    <!-- vertical rule between toolbar clusters -->
+    <Style x:Key="ToolbarDivider" TargetType="Border">
+        <Setter Property="Width" Value="1" />
+        <Setter Property="Background" Value="{StaticResource LineBrush}" />
+        <Setter Property="Margin" Value="6,3,8,3" />
+    </Style>
+
+    <!-- ===================== section header =====================
+         A short accent tick plus a quiet label; used for the three info-panel sections. -->
+    <Style x:Key="SectionTick" TargetType="Rectangle">
+        <Setter Property="Width" Value="2.5" />
+        <Setter Property="Height" Value="11" />
+        <Setter Property="RadiusX" Value="1.5" />
+        <Setter Property="RadiusY" Value="1.5" />
+        <Setter Property="Fill" Value="{StaticResource AccentBrush}" />
+        <Setter Property="Opacity" Value="0.8" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="0,0,7,0" />
+    </Style>
+
+    <Style x:Key="SectionTitle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="10.5" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource LabelBrush}" />
+    </Style>
+
+    <!-- ===================== zoom slider ===================== -->
+    <Style x:Key="ZoomSlider" TargetType="Slider">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisual}" />
+        <Setter Property="Width" Value="104" />
+        <Setter Property="Height" Value="20" />
+        <Setter Property="Margin" Value="4,0,6,0" />
+        <Setter Property="Minimum" Value="0" />
+        <Setter Property="Maximum" Value="1" />
+        <Setter Property="SmallChange" Value="0.04" />
+        <Setter Property="LargeChange" Value="0.15" />
+        <Setter Property="IsMoveToPointEnabled" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Slider">
+                    <Grid Background="Transparent">
+                        <Border Height="3" CornerRadius="2" VerticalAlignment="Center" Background="#232B36" />
+                        <Track x:Name="PART_Track">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="Slider.DecreaseLarge" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border Height="3" CornerRadius="2" VerticalAlignment="Center"
+                                                    Background="{StaticResource AccentBrush}" />
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.DecreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Width="10" Height="16">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border Background="{StaticResource AccentBrush}" CornerRadius="3" />
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="Slider.IncreaseLarge" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border Height="3" CornerRadius="2" VerticalAlignment="Center"
+                                                    Background="#232B36" />
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseRepeatButton>
+                        </Track>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.35" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================ progress ============================ -->
+    <Style x:Key="ThinProgress" TargetType="ProgressBar">
+        <Setter Property="Height" Value="4" />
+        <Setter Property="Background" Value="#1B222C" />
+        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ProgressBar">
+                    <Border Background="{TemplateBinding Background}" CornerRadius="2">
+                        <Grid>
+                            <Border x:Name="PART_Track" />
+                            <Border x:Name="PART_Indicator" HorizontalAlignment="Left"
+                                    Background="{TemplateBinding Foreground}" CornerRadius="2" />
+                        </Grid>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ===================== volume slider ===================== -->
+    <Style x:Key="VolumeSlider" TargetType="Slider" BasedOn="{StaticResource ZoomSlider}">
+        <Setter Property="Width" Value="76" />
+        <Setter Property="Minimum" Value="0" />
+        <Setter Property="Maximum" Value="1" />
+        <Setter Property="SmallChange" Value="0.05" />
+        <Setter Property="LargeChange" Value="0.2" />
+    </Style>
+
+</ResourceDictionary>

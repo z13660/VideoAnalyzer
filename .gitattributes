@@ -1,0 +1,7 @@
+# Keep the repository in LF: the helper scripts have to stay runnable by bash, and the
+# C#/XAML sources do not care either way.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.zip binary
