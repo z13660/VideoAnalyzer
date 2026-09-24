@@ -127,6 +127,14 @@ build into `tools\ffmpeg\bin\` next to `VideoAnalyzer.exe`.
 
 ## Getting started
 
+Releases carry two builds:
+
+| Download | What it needs |
+|---|---|
+| `VideoAnalyzer-<version>-win-x64.zip` | the program on its own — the .NET 8 desktop runtime and a copy of ffmpeg |
+| `VideoAnalyzer-<version>-win-x64-with-ffmpeg.zip` | self contained, ffmpeg included: unpack it and run |
+
+
 ```bash
 git clone https://github.com/z13660/VideoAnalyzer.git
 cd VideoAnalyzer

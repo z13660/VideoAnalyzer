@@ -33,12 +33,20 @@
     published copy is self contained. `dotnet build` stays fast because the 300 MB of
     binaries only travel on publish.
   -->
+  <!--
+    Ship the bundled ffmpeg build next to the executable when it is present, so a published
+    copy can be unpacked and run. The item type matters: CopyToOutputDirectory and
+    CopyToPublishDirectory are only honoured on the types the SDK copies, so a custom name
+    like <FfmpegPayload> is silently ignored — which is how an earlier release came out at
+    450 KB with no ffmpeg in it.
+  -->
   <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffmpeg.exe')">
-    <FfmpegPayload Include="$(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffmpeg.exe;
-                             $(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffprobe.exe">
+    <None Include="$(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffmpeg.exe;
+                   $(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffprobe.exe">
       <Link>tools\ffmpeg\bin\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </FfmpegPayload>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

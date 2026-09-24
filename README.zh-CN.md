@@ -135,6 +135,14 @@ ffmpeg 按以下顺序查找，满足任意一条即可：
 
 ## 开始使用
 
+Release 里有两个包：
+
+| 下载 | 需要什么 |
+|---|---|
+| `VideoAnalyzer-<版本>-win-x64.zip` | 只有程序本体，需要 .NET 8 桌面运行时，并自备 ffmpeg |
+| `VideoAnalyzer-<版本>-win-x64-with-ffmpeg.zip` | 自包含并内置 ffmpeg：解压即用 |
+
+
 ```bash
 git clone https://github.com/z13660/VideoAnalyzer.git
 cd VideoAnalyzer
