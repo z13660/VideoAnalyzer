@@ -34,6 +34,9 @@ public enum GraphKind
 public sealed class FrameGraph : FrameworkElement
 {
     // ---- palette ---------------------------------------------------------
+    /// <summary>Wash over time that is outside the analysis range.</summary>
+    private static readonly Brush OutsideBrush = Frozen(new SolidColorBrush(Color.FromArgb(0xBE, 0x24, 0x28, 0x2D)));
+
     private static readonly Brush BackBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x08, 0x0A, 0x0C)));
     private static readonly Brush TitleBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xA8, 0xAE, 0xB4)));
     private static readonly Brush AxisBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x8C, 0x93, 0x99)));
@@ -98,6 +101,19 @@ public sealed class FrameGraph : FrameworkElement
     public double ViewStart { get => (double)GetValue(ViewStartProperty); set => SetValue(ViewStartProperty, value); }
     public double ViewEnd { get => (double)GetValue(ViewEndProperty); set => SetValue(ViewEndProperty, value); }
     public bool PinPlayhead { get => (bool)GetValue(PinPlayheadProperty); set => SetValue(PinPlayheadProperty, value); }
+
+    /// <summary>
+    /// The stretches that carry QP / motion data. Everything else is greyed.
+    /// </summary>
+    public static readonly DependencyProperty AnalysedRunsProperty = DependencyProperty.Register(
+        nameof(AnalysedRuns), typeof(IReadOnlyList<AnalysedRun>), typeof(FrameGraph),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public IReadOnlyList<AnalysedRun>? AnalysedRuns
+    {
+        get => (IReadOnlyList<AnalysedRun>?)GetValue(AnalysedRunsProperty);
+        set => SetValue(AnalysedRunsProperty, value);
+    }
 
     // ---- geometry --------------------------------------------------------
     private const double AxisWidth = 74;
@@ -166,6 +182,11 @@ public sealed class FrameGraph : FrameworkElement
             dc.Pop();
         }
 
+        // Only the deep rows are range-limited: bitrate, GOP and reorder come from the packet
+        // table and always cover the whole file, so greying them out would be a lie.
+        if (Kind is GraphKind.FrameType or GraphKind.Qp or GraphKind.Motion)
+            DrawUnanalysed(dc, plotW, h, span);
+
         if (result is null || result.FrameCount == 0) return;
 
         double px = (Position - ViewStart) / span * plotW;
@@ -185,6 +206,30 @@ public sealed class FrameGraph : FrameworkElement
             _clipW = plotW;
         }
         return _plotClip;
+    }
+
+    /// <summary>
+    /// Washes the time that carries no QP / motion data.
+    ///
+    /// Drawn from the list of runs rather than from a single span: analysing two separate ranges
+    /// leaves a gap between them, and a span would paint that gap as if it had been measured.
+    /// </summary>
+    private void DrawUnanalysed(DrawingContext dc, double plotW, double h, double span)
+    {
+        var runs = AnalysedRuns;
+        if (runs is null || runs.Count == 0) return;
+
+        double x = 0;
+        foreach (var run in runs)
+        {
+            double from = Math.Clamp((run.From - ViewStart) / span * plotW, 0, plotW);
+            double to = Math.Clamp((run.To - ViewStart) / span * plotW, 0, plotW);
+
+            if (from > x) dc.DrawRectangle(OutsideBrush, null, new Rect(x, 0, from - x, h));
+            if (to > x) x = to;
+        }
+
+        if (x < plotW) dc.DrawRectangle(OutsideBrush, null, new Rect(x, 0, plotW - x, h));
     }
 
     private void DrawCurrentValue(DrawingContext dc, AnalysisResult result, double plotW, double dpi)

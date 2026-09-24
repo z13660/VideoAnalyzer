@@ -25,6 +25,68 @@ public sealed record DeepProgress(string Stage, double Fraction);
 /// </summary>
 public static class DeepAnalysisService
 {
+    /// <summary>
+    /// The part of a file a deep pass should look at: a range of the frame table, plus the
+    /// ffmpeg arguments that make a decoder produce exactly that part.
+    ///
+    /// The two offsets are not the same thing, which is the whole reason this type exists. A
+    /// <c>-debug qp</c> dump is written by the decoder as it works, so it also covers the key
+    /// frame it had to decode on the way in — hence <see cref="DecodeOffset"/>, taken from the
+    /// key frame and paired with a skip of everything before the slice. A rawvideo pipe only
+    /// carries what ffmpeg decided to output, which starts at the slice itself — hence the plain
+    /// presentation index used by the motion pass.
+    /// </summary>
+    public readonly record struct Slice(
+        int First, int Last, int DecodeOffset, int FirstDecode, double From, double To)
+    {
+        public static readonly Slice Whole = new(0, int.MaxValue, 0, 0, 0, -1);
+
+        public int Count => Math.Max(0, Last - First + 1);
+        public bool Ranged => From > 0.01 || (To > 0 && To < double.MaxValue);
+        public double Length => Math.Max(0, To - From);
+
+        /// <summary>Input-side arguments: the seek, placed before <c>-i</c>.</summary>
+        public string InputArgs => Ranged
+            ? $"-ss {From.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} "
+            : string.Empty;
+
+        /// <summary>Output-side arguments: the duration, placed after <c>-i</c>.</summary>
+        public string OutputArgs => Ranged
+            ? $"-t {Length.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} "
+            : string.Empty;
+
+        public IEnumerable<FrameInfo> Frames(AnalysisResult result)
+        {
+            for (int i = First; i <= Last && i < result.Frames.Count; i++)
+                yield return result.Frames[i];
+        }
+
+        public static Slice Of(AnalysisResult result, double from, double to)
+        {
+            int last = result.FrameCount - 1;
+            if (last < 0) return new Slice(0, -1, 0, 0, 0, -1);
+
+            double end = to > 0 ? Math.Min(to, result.DurationSeconds) : result.DurationSeconds;
+            double start = Math.Clamp(from, 0, Math.Max(0, end - 0.04));
+            if (end - start < 0.05) end = Math.Min(result.DurationSeconds, start + 0.05);
+
+            int first = Math.Clamp(result.IndexAt(start), 0, last);
+            int lastIndex = Math.Clamp(result.IndexAt(end), first, last);
+
+            // the decoder starts at the key frame at or before the slice, so that is the index
+            // its own numbering has to be shifted by
+            int key = first;
+            while (key > 0 && !result.Frames[key].KeyFrame) key--;
+            int decodeOffset = Math.Max(0, result.Frames[key].DecodeIndex);
+            int firstDecode = Math.Max(0, result.Frames[first].DecodeIndex);
+
+            return new Slice(first, lastIndex, decodeOffset, firstDecode, start, end);
+        }
+
+        public override string ToString()
+            => Ranged ? $"{From:0.###}-{To:0.###}s frames {First}-{Last}" : "whole file";
+    }
+
     private static readonly Regex NewFrameRx = new(@"New frame, type:\s*(\w)", RegexOptions.Compiled);
     private static readonly Regex IntRx = new(@"-?\d+", RegexOptions.Compiled);
     private static readonly Regex MvRx = new(@"mv[^\d-]*(-?\d+)[^\d-]+(-?\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -33,21 +95,30 @@ public static class DeepAnalysisService
 
     // ------------------------------------------------------------------ QP + type
 
+    /// <summary>
+    /// Picture types and QP. <paramref name="fromSeconds"/> / <paramref name="toSeconds"/> limit
+    /// the decode to a slice of the file — a two hour recording can be examined a minute at a
+    /// time — and the parsed frames are mapped back onto the whole frame table, so the graphs
+    /// show the analysed slice in its real place and leave the rest empty.
+    /// </summary>
     public static async Task RunTypeAndQpPassAsync(
         AnalysisResult result,
         IProgress<DeepProgress>? progress,
         Action onUpdated,
-        CancellationToken ct)
+        CancellationToken ct,
+        double fromSeconds = 0,
+        double toSeconds = -1)
     {
         var file = result.Media.FilePath;
+        var slice = Slice.Of(result, fromSeconds, toSeconds);
         bool qpAvailable = await ProbeAsync(file, "-debug qp", "New frame, type:", ct);
-        AppLog.Write($"deep: qpNative={qpAvailable}");
+        AppLog.Write($"deep: qpNative={qpAvailable} range={slice}");
 
         if (qpAvailable)
         {
             try
             {
-                await RunQpPassAsync(result, progress, onUpdated, ct);
+                await RunQpPassAsync(result, progress, onUpdated, ct, slice);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -57,7 +128,7 @@ public static class DeepAnalysisService
         }
 
         // Types can still be missing (frames near the end, or no dump at all).
-        InferMissingTypes(result);
+        InferMissingTypes(result, slice);
 
         if (result.Frames.All(f => !f.QpAvg.HasValue))
         {
@@ -82,7 +153,7 @@ public static class DeepAnalysisService
             await ProcessRunner.RunStreamingAsync(exe, args, line =>
             {
                 if (line.Contains(needle, StringComparison.OrdinalIgnoreCase)) found = true;
-            }, ct).ConfigureAwait(false);
+            }, ct, ProcessRunner.Analysis).ConfigureAwait(false);
 
             return found;
         }
@@ -106,7 +177,7 @@ public static class DeepAnalysisService
             await ProcessRunner.RunStreamingAsync(exe, args, line =>
             {
                 if (MvRx.IsMatch(line)) found = true;
-            }, ct).ConfigureAwait(false);
+            }, ct, ProcessRunner.Analysis).ConfigureAwait(false);
 
             return found;
         }
@@ -118,10 +189,12 @@ public static class DeepAnalysisService
         AnalysisResult result,
         IProgress<DeepProgress>? progress,
         Action onUpdated,
-        CancellationToken ct)
+        CancellationToken ct,
+        Slice slice)
     {
         var exe = FfmpegLocator.FfmpegPath!;
-        var args = $"-v debug -hide_banner -debug qp -i \"{result.Media.FilePath}\" -an -f null -";
+        var args = $"-v debug -hide_banner -debug qp {slice.InputArgs}-i \"{result.Media.FilePath}\" " +
+                   $"{slice.OutputArgs}-an -f null -";
 
         // decode order -> frame, resolved once instead of searched per sample
         var byDecodeIndex = new Dictionary<int, FrameInfo>(result.FrameCount);
@@ -137,7 +210,7 @@ public static class DeepAnalysisService
         var types = new Dictionary<int, PicType>();
         int decodeIndex = -1;
         int sinceUpdate = 0;
-        double total = Math.Max(1, result.FrameCount);
+        double total = Math.Max(1, slice.Count);
 
         await ProcessRunner.RunStreamingAsync(exe, args, line =>
         {
@@ -145,9 +218,16 @@ public static class DeepAnalysisService
             if (m.Success)
             {
                 decodeIndex++;
-                types[decodeIndex] = ParseType(m.Groups[1].Value);
-                values[decodeIndex] = new List<int>(64);
-                openFrame[PointerOf(line)] = decodeIndex;
+
+                // The decoder was handed a seek, so it starts at the key frame before the
+                // slice and re-numbers from there. Shift its numbering back onto the file's
+                // decode indices, and ignore the pre-roll it decoded on the way in.
+                int global = decodeIndex + slice.DecodeOffset;
+                if (global < slice.FirstDecode) return;
+
+                types[global] = ParseType(m.Groups[1].Value);
+                values[global] = new List<int>(64);
+                openFrame[PointerOf(line)] = global;
 
                 if (++sinceUpdate >= UpdateEvery)
                 {
@@ -177,10 +257,10 @@ public static class DeepAnalysisService
 
             foreach (Match n in IntRx.Matches(body))
                 if (int.TryParse(n.Value, out var v) && v is > 0 and <= 63) list.Add(v);
-        }, ct).ConfigureAwait(false);
+        }, ct, ProcessRunner.Analysis).ConfigureAwait(false);
 
         Apply(result, byDecodeIndex, values, types);
-        FillQpGaps(result);
+        FillQpGaps(result, slice);
 
         result.ComputeAggregates();
         result.MarkUpdated();
@@ -240,10 +320,10 @@ public static class DeepAnalysisService
     /// quantiser. Carrying the previous value forward keeps the graph continuous, and the values
     /// on either side of such a frame differ by very little in practice.
     /// </summary>
-    private static void FillQpGaps(AnalysisResult result)
+    private static void FillQpGaps(AnalysisResult result, Slice slice)
     {
         double? last = null;
-        foreach (var f in result.Frames)
+        foreach (var f in slice.Frames(result))
         {
             if (f.QpAvg.HasValue) { last = f.QpAvg; continue; }
             if (last is null) continue;
@@ -255,7 +335,7 @@ public static class DeepAnalysisService
 
         // a leading run with nothing before it takes the first known value
         last = null;
-        for (int i = result.Frames.Count - 1; i >= 0; i--)
+        for (int i = slice.Last; i >= slice.First; i--)
         {
             var f = result.Frames[i];
             if (f.QpAvg.HasValue) { last = f.QpAvg; continue; }
@@ -279,11 +359,11 @@ public static class DeepAnalysisService
     /// pass left, so the type sequence is completed by copying the nearest known type —
     /// types run in a stable pattern inside a GOP, which makes this a safe repair.
     /// </summary>
-    private static void InferMissingTypes(AnalysisResult result)
+    private static void InferMissingTypes(AnalysisResult result, Slice slice)
     {
         var frames = result.Frames;
-        int last = -1;
-        for (int i = 0; i < frames.Count; i++)
+        int last = slice.First - 1;
+        for (int i = slice.First; i <= slice.Last && i < frames.Count; i++)
         {
             if (frames[i].Type != PicType.Other) { last = i; continue; }
             if (frames[i].KeyFrame) { frames[i].Type = PicType.I; continue; }
@@ -291,9 +371,11 @@ public static class DeepAnalysisService
         }
 
         // a leading run with no known type inherits from the first known one
-        int first = frames.FindIndex(f => f.Type != PicType.Other);
-        if (first > 0)
-            for (int i = 0; i < first; i++)
+        int first = -1;
+        for (int i = slice.First; i <= slice.Last && i < frames.Count; i++)
+            if (frames[i].Type != PicType.Other) { first = i; break; }
+        if (first > slice.First)
+            for (int i = slice.First; i < first; i++)
                 frames[i].Type = frames[first].Type;
     }
 
@@ -328,16 +410,19 @@ public static class DeepAnalysisService
         AnalysisResult result,
         IProgress<DeepProgress>? progress,
         Action onUpdated,
-        CancellationToken ct)
+        CancellationToken ct,
+        double fromSeconds = 0,
+        double toSeconds = -1)
     {
+        var slice = Slice.Of(result, fromSeconds, toSeconds);
         bool mvAvailable = await ProbeMotionVectorsAsync(result.Media.FilePath, ct);
-        AppLog.Write($"deep: mvNative={mvAvailable}");
+        AppLog.Write($"deep: mvNative={mvAvailable} range={slice}");
 
         if (mvAvailable)
         {
             try
             {
-                await RunMvPassAsync(result, progress, ct);
+                await RunMvPassAsync(result, progress, ct, slice);
                 if (result.Frames.Any(f => f.MotionMean.HasValue))
                 {
                     result.ComputeAggregates();
@@ -359,7 +444,7 @@ public static class DeepAnalysisService
             result.ComputeAggregates();
             result.MarkUpdated();
             onUpdated();
-        }, ct);
+        }, ct, slice);
 
         result.MotionEstimated = true;
         result.ComputeAggregates();
@@ -371,10 +456,12 @@ public static class DeepAnalysisService
     private static async Task RunMvPassAsync(
         AnalysisResult result,
         IProgress<DeepProgress>? progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        Slice slice)
     {
         var exe = FfmpegLocator.FfmpegPath!;
-        var args = $"-v debug -hide_banner -debug mv -i \"{result.Media.FilePath}\" -an -f null -";
+        var args = $"-v debug -hide_banner -debug mv {slice.InputArgs}-i \"{result.Media.FilePath}\" " +
+                   $"{slice.OutputArgs}-an -f null -";
 
         var perFrame = new List<(double mean, double max, int fwd, int bwd)>();
         double sum = 0, max = 0;
@@ -401,15 +488,18 @@ public static class DeepAnalysisService
                 if (len > max) max = len;
                 if (x >= 0) fwd++; else bwd++;
             }
-        }, ct).ConfigureAwait(false);
+        }, ct, ProcessRunner.Analysis).ConfigureAwait(false);
 
         if (count > 0) perFrame.Add((sum / count, max, fwd, bwd));
 
+        // perFrame[0] is the key frame the decoder had to start from, so the file's decode
+        // indices are shifted by that much before they index into it
         foreach (var f in result.Frames)
         {
-            if (f.DecodeIndex >= 0 && f.DecodeIndex < perFrame.Count)
+            int local = f.DecodeIndex - slice.DecodeOffset;
+            if (f.DecodeIndex >= 0 && local >= 0 && local < perFrame.Count)
             {
-                var (mean, mx, fw, bw) = perFrame[f.DecodeIndex];
+                var (mean, mx, fw, bw) = perFrame[local];
                 f.MotionMean = mean; f.MotionMax = mx;
                 f.MotionFwdCount = fw; f.MotionBwdCount = bw;
                 f.MotionVectorCount = fw + bw;

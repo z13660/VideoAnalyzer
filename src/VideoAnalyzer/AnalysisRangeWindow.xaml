@@ -1,0 +1,72 @@
+<Window x:Class="VideoAnalyzer.AnalysisRangeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="分析范围"
+        Icon="pack://application:,,,/app.ico"
+        SizeToContent="WidthAndHeight"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource WindowBack}"
+        FontFamily="{StaticResource UiFont}"
+        TextOptions.TextFormattingMode="Display">
+
+    <StackPanel Margin="20,16,20,16" MinWidth="360">
+        <TextBlock Style="{StaticResource Caption}"
+                   Text="只对这段时间重跑 QP 与运动分析，其余结果保留。"
+                   TextWrapping="Wrap" />
+
+        <TextBlock x:Name="DurationText" Style="{StaticResource Caption}"
+                   Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" />
+
+        <Grid Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource InfoLabel}"
+                       Text="起始" Margin="0,0,10,0" VerticalAlignment="Center" />
+            <TextBox x:Name="FromBox" Grid.Row="0" Grid.Column="1"
+                     Background="{StaticResource CardBack}" Foreground="{StaticResource TextBrush}"
+                     BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                     Padding="6,4" FontFamily="{StaticResource MonoFont}" FontSize="13"
+                     CaretBrush="{StaticResource TextBrush}" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource InfoLabel}"
+                       Text="结束" Margin="0,8,10,0" VerticalAlignment="Center" />
+            <TextBox x:Name="ToBox" Grid.Row="1" Grid.Column="1" Margin="0,8,0,0"
+                     Background="{StaticResource CardBack}" Foreground="{StaticResource TextBrush}"
+                     BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                     Padding="6,4" FontFamily="{StaticResource MonoFont}" FontSize="13"
+                     CaretBrush="{StaticResource TextBrush}" />
+        </Grid>
+
+        <TextBlock Style="{StaticResource Caption}" Margin="0,8,0,0"
+                   Foreground="{StaticResource MutedBrush}"
+                   Text="秒数、mm:ss 或 hh:mm:ss 都可以，例如 12.5 / 0:12.5 / 00:00:12.5" />
+
+        <TextBlock x:Name="ErrorText" Style="{StaticResource Caption}" Margin="0,8,0,0"
+                   Foreground="{StaticResource WarnBrush}" Visibility="Collapsed" TextWrapping="Wrap" />
+
+        <Grid Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Button Grid.Column="0" Style="{StaticResource ToolButton}" HorizontalAlignment="Left"
+                    Content="用当前视图" Click="OnUseViewClick"
+                    ToolTip="把时间轴现在显示的范围填进来" />
+            <Button Grid.Column="1" Style="{StaticResource ToolButton}" Margin="0,0,8,0"
+                    Content="取消" Click="OnCancelClick" />
+            <Button Grid.Column="2" Style="{StaticResource ToolButton}"
+                    Content="开始分析" Click="OnOkClick" IsDefault="True" />
+        </Grid>
+    </StackPanel>
+</Window>

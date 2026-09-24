@@ -89,6 +89,12 @@ public sealed class MainViewModel : ObservableObject
     private double _zoomLevel;
     private bool _syncingZoom;
     private bool _viewFitted;
+    private double _rangeFrom;
+    private double _rangeTo = -1;
+    private double _analysedFrom;
+    private double _analysedTo = -1;
+    private IReadOnlyList<AnalysedRun> _analysedRuns = Array.Empty<AnalysedRun>();
+    private double _rangeAnchor = double.NaN;
     private double _viewStart;
     private double _viewEnd = 1;
     private double _progress;
@@ -234,6 +240,112 @@ public sealed class MainViewModel : ObservableObject
             return $"PICTURE TYPES   key {r.IStats.Count} ({r.KeyFramePercent:0.0}%)   " +
                    $"GOP {r.MaxGop}   {mode}";
         }
+    }
+
+    /// <summary>
+    /// The stretch of the clip the deep passes cover. 0 / -1 means the whole file. The ruler and
+    /// the QP / motion rows grey out everything outside it: those rows have nothing in them, and
+    /// an empty row is easy to mistake for a flat one.
+    /// </summary>
+    public double RangeFrom
+    {
+        get => _rangeFrom;
+        private set { if (Set(ref _rangeFrom, value)) Raise(nameof(HasRange)); }
+    }
+
+    public double RangeTo
+    {
+        get => _rangeTo;
+        private set { if (Set(ref _rangeTo, value)) Raise(nameof(HasRange)); }
+    }
+
+    public bool HasRange => _rangeTo > _rangeFrom + 0.05;
+
+    /// <summary>
+    /// The stretch that actually has QP or motion data, read off the frame table.
+    ///
+    /// This is deliberately not the range setting: the setting says what the next pass will
+    /// cover, this says what has been measured. The two part company as soon as a pass is
+    /// cancelled or a range is cleared, and it is this one that decides what is greyed out —
+    /// greying by the setting would clear the shading while the rows were still empty.
+    /// </summary>
+    public double AnalysedFrom
+    {
+        get => _analysedFrom;
+        private set { if (Set(ref _analysedFrom, value)) Raise(nameof(HasAnalysedSpan)); }
+    }
+
+    public double AnalysedTo
+    {
+        get => _analysedTo;
+        private set { if (Set(ref _analysedTo, value)) Raise(nameof(HasAnalysedSpan)); }
+    }
+
+    public bool HasAnalysedSpan => _analysedTo > _analysedFrom;
+
+    /// <summary>
+    /// The stretches that have data, one entry per contiguous run of frames. Analysing several
+    /// ranges leaves gaps between them, and the shading has to follow the runs rather than the
+    /// span or it would paint those gaps as measured.
+    /// </summary>
+    public IReadOnlyList<AnalysedRun> AnalysedRuns
+    {
+        get => _analysedRuns;
+        private set { _analysedRuns = value; Raise(); }
+    }
+
+    /// <summary>Recomputes <see cref="AnalysedFrom"/> / <see cref="AnalysedTo"/> from the data.</summary>
+    private void RefreshAnalysedSpan()
+    {
+        var r = _result;
+        var frames = r?.Frames;
+        if (frames is null || frames.Count == 0)
+        {
+            AnalysedFrom = 0;
+            AnalysedTo = -1;
+            AnalysedRuns = Array.Empty<AnalysedRun>();
+            return;
+        }
+
+        double step = frames.Count > 1 ? Math.Max(0.001, frames[1].PtsTime - frames[0].PtsTime) : 0.04;
+        var runs = new List<AnalysedRun>();
+        int start = -1;
+
+        for (int i = 0; i <= frames.Count; i++)
+        {
+            bool on = i < frames.Count
+                      && (frames[i].QpAvg.HasValue || frames[i].MotionMean.HasValue);
+
+            if (on && start < 0) start = i;
+            else if (!on && start >= 0)
+            {
+                runs.Add(new AnalysedRun(frames[start].PtsTime, frames[i - 1].PtsTime + step));
+                start = -1;
+            }
+        }
+
+        AnalysedRuns = runs;
+        AnalysedFrom = runs.Count > 0 ? runs[0].From : 0;
+        AnalysedTo = runs.Count > 0 ? runs[^1].To : -1;
+    }
+
+    /// <summary>Start of a range that has been marked but not finished; NaN when there is none.</summary>
+    public double RangeAnchor
+    {
+        get => _rangeAnchor;
+        set => Set(ref _rangeAnchor, value);
+    }
+
+    public void SetRange(double from, double to)
+    {
+        RangeFrom = from;
+        RangeTo = to;
+    }
+
+    public void ClearRange()
+    {
+        RangeFrom = 0;
+        RangeTo = -1;
     }
 
     public double ViewStart { get => _viewStart; private set => Set(ref _viewStart, value); }
@@ -422,6 +534,7 @@ public sealed class MainViewModel : ObservableObject
 
         RebuildTypeRows();
         RebuildFrameRows();
+        RefreshAnalysedSpan();
         Raise(nameof(KeyFrameText));
         Raise(nameof(TypeSummary));
         DataChanged?.Invoke();

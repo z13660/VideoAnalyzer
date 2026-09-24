@@ -69,7 +69,7 @@ public sealed class Filmstrip
 
         await Task.Run(async () =>
         {
-            using var p = ProcessRunner.Start(exe, args);
+            using var p = ProcessRunner.Start(exe, args, ProcessRunner.Analysis);
             _ = p.StandardError.ReadToEndAsync(ct);
             var stream = p.StandardOutput.BaseStream;
 

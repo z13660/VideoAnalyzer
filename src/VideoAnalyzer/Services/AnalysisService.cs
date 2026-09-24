@@ -34,11 +34,27 @@ public sealed class AnalysisPipeline
 
     public AnalysisResult? Result { get; private set; }
 
+    /// <summary>
+    /// Asked once the packet table exists and before the deep passes run. Returning true means
+    /// the passes are skipped — the analysis is already in hand, which is what the on-disk cache
+    /// answers with after a file has been analysed once.
+    /// </summary>
+    public Func<AnalysisResult, bool>? DeepAnalysisAlreadyDone { get; set; }
+
     public async Task RunAsync(
         string filePath,
         bool motionAnalysis,
         IProgress<AnalysisProgress>? progress,
         CancellationToken ct)
+        => await RunAsync(filePath, motionAnalysis, progress, ct, 0, -1).ConfigureAwait(false);
+
+    public async Task RunAsync(
+        string filePath,
+        bool motionAnalysis,
+        IProgress<AnalysisProgress>? progress,
+        CancellationToken ct,
+        double fromSeconds,
+        double toSeconds)
     {
         AppLog.Write($"analyse: start {filePath} motion={motionAnalysis}");
 
@@ -88,7 +104,39 @@ public sealed class AnalysisPipeline
             return;
         }
 
-        // ---- 3 + 4. picture types + QP, and motion, side by side -------------
+        if (DeepAnalysisAlreadyDone?.Invoke(result) == true)
+        {
+            result.HasDeepAnalysis = true;
+            result.ComputeAggregates();
+            result.MarkUpdated();
+            Updated?.Invoke();
+            progress?.Report(new AnalysisProgress("Ready (restored from cache)", 1));
+            return;
+        }
+
+        await RunDeepAsync(result, motionAnalysis, progress, ct, fromSeconds, toSeconds).ConfigureAwait(false);
+
+        if (motionAnalysis) result.HasDeepAnalysis = true;
+
+        result.ComputeAggregates();
+        result.MarkUpdated();
+        Updated?.Invoke();
+        progress?.Report(new AnalysisProgress("Ready", 1));
+    }
+
+    /// <summary>
+    /// The two deep passes, over a range of the file (or all of it). Split out so the window can
+    /// re-run them for a slice of an already-loaded clip without touching the packet table, the
+    /// transport or the view.
+    /// </summary>
+    public async Task RunDeepAsync(
+        AnalysisResult result,
+        bool motionAnalysis,
+        IProgress<AnalysisProgress>? progress,
+        CancellationToken ct,
+        double fromSeconds = 0,
+        double toSeconds = -1)
+    {
         // The two passes are independent — one parses the decoder's QP dump, the other
         // block-matches the decoded picture — and each takes about as long as the other. Run
         // together they finish in the time of the slower one instead of the sum, which is what
@@ -108,7 +156,9 @@ public sealed class AnalysisPipeline
             result,
             new Progress<DeepProgress>(p => { lock (gate) qpDone = p.Fraction; ReportDeep(); }),
             () => Updated?.Invoke(),
-            ct);
+            ct,
+            fromSeconds,
+            toSeconds);
 
         var motionTask = Task.CompletedTask;
         if (motionAnalysis)
@@ -117,17 +167,17 @@ public sealed class AnalysisPipeline
                 result,
                 new Progress<DeepProgress>(p => { lock (gate) motionDone = p.Fraction; ReportDeep(); }),
                 () => Updated?.Invoke(),
-                ct);
+                ct,
+                fromSeconds,
+                toSeconds);
         }
 
         await Task.WhenAll(qpTask, motionTask).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
 
         if (motionAnalysis) result.HasDeepAnalysis = true;
-
         result.ComputeAggregates();
         result.MarkUpdated();
         Updated?.Invoke();
-        progress?.Report(new AnalysisProgress("Ready", 1));
     }
 }

@@ -46,6 +46,12 @@
                 <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Style="{StaticResource ToolButton}" Content="打开视频" Click="OnOpenClick" />
                     <Button Style="{StaticResource ToolButton}" Content="重新分析" Click="OnReanalyseClick" />
+                    <Button Style="{StaticResource ToolButton}" Content="取消分析" Click="OnCancelAnalysisClick"
+                            ToolTip="停止剩余的分析，保留已经算出的结果"
+                            Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
+                    <Button Style="{StaticResource ToolButton}" Content="分析范围…" Click="OnAnalyseRangeClick"
+                            ToolTip="选择要分析的时间段，只对它重跑 QP 与运动分析，其余结果保留"
+                            Visibility="{Binding IsBusy, Converter={StaticResource NotBoolToVis}}" />
 
                     <Border Style="{StaticResource ToolbarDivider}" />
 
@@ -280,6 +286,7 @@
                                  Result="{Binding Result}" Position="{Binding Position}"
                                  ViewStart="{Binding ViewStart}" ViewEnd="{Binding ViewEnd}"
                                  PinPlayhead="{Binding PinPlayhead}"
+                                 AnalysedRuns="{Binding AnalysedRuns}"
                                  ScrubPreview="OnScrubPreview" ScrubCommit="OnScrubCommit"
                                  ZoomRequested="OnZoomRequested" />
                 <Border Grid.Row="1" Background="{StaticResource DottedDivider}" />
@@ -287,6 +294,7 @@
                                  Result="{Binding Result}" Position="{Binding Position}"
                                  ViewStart="{Binding ViewStart}" ViewEnd="{Binding ViewEnd}"
                                  PinPlayhead="{Binding PinPlayhead}"
+                                 AnalysedRuns="{Binding AnalysedRuns}"
                                  ScrubPreview="OnScrubPreview" ScrubCommit="OnScrubCommit"
                                  ZoomRequested="OnZoomRequested" />
                 <Border Grid.Row="3" Background="{StaticResource DottedDivider}" />
@@ -294,6 +302,7 @@
                                  Result="{Binding Result}" Position="{Binding Position}"
                                  ViewStart="{Binding ViewStart}" ViewEnd="{Binding ViewEnd}"
                                  PinPlayhead="{Binding PinPlayhead}"
+                                 AnalysedRuns="{Binding AnalysedRuns}"
                                  ScrubPreview="OnScrubPreview" ScrubCommit="OnScrubCommit"
                                  ZoomRequested="OnZoomRequested" />
                 <Border Grid.Row="5" Background="{StaticResource DottedDivider}" />
@@ -301,6 +310,7 @@
                                  Result="{Binding Result}" Position="{Binding Position}"
                                  ViewStart="{Binding ViewStart}" ViewEnd="{Binding ViewEnd}"
                                  PinPlayhead="{Binding PinPlayhead}"
+                                 AnalysedRuns="{Binding AnalysedRuns}"
                                  ScrubPreview="OnScrubPreview" ScrubCommit="OnScrubCommit"
                                  ZoomRequested="OnZoomRequested" />
                 <Border Grid.Row="7" Background="{StaticResource DottedDivider}" />
@@ -308,6 +318,7 @@
                                  Result="{Binding Result}" Position="{Binding Position}"
                                  ViewStart="{Binding ViewStart}" ViewEnd="{Binding ViewEnd}"
                                  PinPlayhead="{Binding PinPlayhead}"
+                                 AnalysedRuns="{Binding AnalysedRuns}"
                                  ScrubPreview="OnScrubPreview" ScrubCommit="OnScrubCommit"
                                  ZoomRequested="OnZoomRequested" />
                 <Border Grid.Row="9" Background="{StaticResource DottedDivider}" />
@@ -315,6 +326,7 @@
                                  Result="{Binding Result}" Position="{Binding Position}"
                                  ViewStart="{Binding ViewStart}" ViewEnd="{Binding ViewEnd}"
                                  PinPlayhead="{Binding PinPlayhead}"
+                                 AnalysedRuns="{Binding AnalysedRuns}"
                                  ScrubPreview="OnScrubPreview" ScrubCommit="OnScrubCommit"
                                  ZoomRequested="OnZoomRequested" />
             </Grid>
@@ -335,9 +347,12 @@
                     BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                     CornerRadius="8" ClipToBounds="True">
                 <ctrl:TimelineStrip Height="30"
+                                    RangeRequested="OnTimelineRangeRequested"
                                     Position="{Binding Position}"
                                     ViewStart="{Binding ViewStart}" ViewEnd="{Binding ViewEnd}"
                                     PinPlayhead="{Binding PinPlayhead}"
+                                    AnalysedRuns="{Binding AnalysedRuns}"
+                                    RangeAnchor="{Binding RangeAnchor}"
                                     ClipSeconds="{Binding TotalSeconds}"
                                     ScrubPreview="OnScrubPreview" ScrubCommit="OnScrubCommit"
                                     ZoomRequested="OnZoomRequested" />

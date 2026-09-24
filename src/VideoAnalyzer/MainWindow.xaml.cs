@@ -47,6 +47,9 @@ public partial class MainWindow : Window
     /// </summary>
     private bool _playbackEnded;
 
+    /// <summary>Frames that came back from the on-disk cache for the file currently open.</summary>
+    private int _restoredFromCache;
+
     private bool _videoFullScreen;
     private WindowState _savedState;
     private WindowStyle _savedStyle;
@@ -88,7 +91,16 @@ public partial class MainWindow : Window
         };
 
         Loaded += OnLoaded;
-        Closing += (_, _) => { _analysisCts?.Cancel(); _engine.Dispose(); _audio.Dispose(); };
+        Closing += (_, _) =>
+        {
+            _analysisCts?.Cancel();
+            _engine.Dispose();
+            _audio.Dispose();
+
+            // The token only stops the read loops; nothing here waits for them to reach their
+            // own kill, and ffmpeg is a child process — it does not die with the window.
+            ProcessRunner.KillAll();
+        };
     }
 
     /// <summary>
@@ -178,9 +190,21 @@ public partial class MainWindow : Window
             await OpenAsync(dlg.FileName);
     }
 
-    private async Task OpenAsync(string path)
+    /// <param name="useCache">
+    /// False for an explicit 重新分析: the cache exists to avoid decoding the same file twice by
+    /// accident, not to refuse to do what the button says.
+    /// </param>
+    private async Task OpenAsync(string path, bool useCache = true)
     {
-        _analysisCts?.Cancel();
+        if (_analysisCts is { IsCancellationRequested: false })
+        {
+            AppLog.Write("open: cancelling the previous analysis");
+            _analysisCts.Cancel();
+        }
+
+        // Deterministic: the old file's decoders go now, rather than when their read loops
+        // happen to notice the token.
+        ProcessRunner.KillAll(ProcessRunner.Analysis);
         SetPlaying(false);
         _engine.Stop();
         ReleaseCurrentBuffer();
@@ -190,6 +214,10 @@ public partial class MainWindow : Window
         _displayedIndex = -1;
         _targetIndex = 0;
         _filmstrip.Clear();
+
+        _vm.RangeAnchor = double.NaN;
+        _vm.ClearRange();
+        _restoredFromCache = 0;
 
         var cts = new CancellationTokenSource();
         _analysisCts = cts;
@@ -239,6 +267,20 @@ public partial class MainWindow : Window
         // Throttled: a streaming pass can publish hundreds of updates a second.
         pipeline.Updated += QueueViewRefresh;
 
+        // Re-opening a file that has been analysed before costs nothing: the deep columns come
+        // back from the cache and the decoders stay closed.
+        if (useCache)
+        {
+            pipeline.DeepAnalysisAlreadyDone = result =>
+            {
+                int restored = AnalysisCache.TryLoad(result);
+                if (restored == 0) return false;
+
+                _restoredFromCache = restored;
+                return true;
+            };
+        }
+
         try
         {
             var progress = new Progress<AnalysisProgress>(p =>
@@ -255,14 +297,19 @@ public partial class MainWindow : Window
                 var mode = result.HasDeepAnalysis
                     ? (result.QpEstimated || result.MotionEstimated ? "QP/motion partly estimated" : "decoder native data")
                     : "motion pass off";
+                string cacheNote = _restoredFromCache > 0
+                    ? $"  ·  {_restoredFromCache} frames from cache"
+                    : string.Empty;
                 _vm.StatusText = $"{result.Media.FileName}  ·  {result.FrameCount} frames  ·  " +
-                                 $"{result.Media.DurationText}  ·  {result.Media.FrameRateText}  ·  {mode}";
+                                 $"{result.Media.DurationText}  ·  {result.Media.FrameRateText}  ·  {mode}{cacheNote}";
             }
         }
         catch (OperationCanceledException)
         {
-            _vm.StatusText = "analysis cancelled.";
-            AppLog.Write("open: cancelled");
+            var kept = _result?.Frames.Count(f => f.QpAvg.HasValue || f.MotionMean.HasValue) ?? 0;
+            _vm.StatusText = $"analysis cancelled  ·  {kept} frames of QP / motion kept";
+            AppLog.Write($"open: cancelled, {kept} frames kept");
+            SaveCache();
         }
         catch (Exception ex)
         {
@@ -275,7 +322,35 @@ public partial class MainWindow : Window
             _vm.IsBusy = false;
             _vm.Progress = 0;
             _vm.ProgressStage = string.Empty;
+            SaveCache();
+            ReleaseAnalysisToken(cts);
         }
+    }
+
+    /// <summary>
+    /// Releases the token source of a finished run.
+    ///
+    /// The guard that keeps two passes from running at once reads this field, so leaving a
+    /// completed one in place makes every later pass look like it is already running — which is
+    /// exactly how a second range analysis came to be silently refused.
+    /// </summary>
+    private void ReleaseAnalysisToken(CancellationTokenSource cts)
+    {
+        if (!ReferenceEquals(_analysisCts, cts)) return;      // a newer run owns it now
+        _analysisCts = null;
+        try { cts.Dispose(); } catch { }
+    }
+
+    /// <summary>
+    /// Writes whatever has been analysed so far. Called when a pass ends, including a cancelled
+    /// one, so work already done survives both a cancel and a restart of the program.
+    /// </summary>
+    private void SaveCache()
+    {
+        var result = _result;
+        if (result is null || result.FrameCount == 0) return;
+        if (!result.Frames.Any(f => f.QpAvg.HasValue || f.MotionMean.HasValue)) return;
+        AnalysisCache.Save(result);
     }
 
     /// <summary>
@@ -318,7 +393,158 @@ public partial class MainWindow : Window
     private async void OnReanalyseClick(object sender, RoutedEventArgs e)
     {
         if (_result is null) return;
-        await OpenAsync(_result.Media.FilePath);
+
+        // the marked range is a setting, not a one-shot: re-analysing honours it
+        if (_vm.HasRange)
+        {
+            await AnalyseRangeAsync(_vm.RangeFrom, _vm.RangeTo);
+            return;
+        }
+
+        await OpenAsync(_result.Media.FilePath, useCache: false);
+    }
+
+    /// <summary>
+    /// Right-clicking the ruler marks a range: the first click sets the start, the second sets
+    /// the end and analyses that stretch. Another right-click starts a new range, and whatever
+    /// was analysed before stays in the frame table, so ranges can be walked through one after
+    /// another.
+    ///
+    /// The step is read from the state rather than counted, so a range set through the dialog
+    /// behaves the same way.
+    /// </summary>
+    private async void OnTimelineRangeRequested(object? sender, double seconds)
+    {
+        var result = _result;
+        if (result is null) return;
+
+        if (!double.IsNaN(_vm.RangeAnchor))
+        {
+            double from = Math.Min(_vm.RangeAnchor, seconds);
+            double to = Math.Max(_vm.RangeAnchor, seconds);
+            _vm.RangeAnchor = double.NaN;
+
+            if (to - from < 0.1)
+            {
+                _vm.StatusText = "that range is too short — right-click twice to mark it again";
+                return;
+            }
+
+            await AnalyseRangeAsync(from, to);
+            return;
+        }
+
+        // A range that is half marked, or one that has already been analysed, is simply
+        // replaced. Its results stay in the frame table, so marking one range after another is
+        // the normal way to work; dropping the range altogether is a job for the dialog.
+        _vm.ClearRange();
+        _vm.RangeAnchor = seconds;
+        _vm.StatusText = $"range starts at {TimelineStrip.FormatClock(seconds, true)}" +
+                         "  ·  right-click again for the end";
+        AppLog.Write($"range: start marked at {seconds:0.###}s");
+    }
+
+    /// <summary>
+    /// Re-runs the deep passes over the time range the strip is showing. The packet table, the
+    /// transport and the view are left alone, and results outside the range are kept: on a long
+    /// clip this is the difference between waiting for the whole file and waiting for the minute
+    /// you actually care about.
+    /// </summary>
+    private async void OnAnalyseRangeClick(object sender, RoutedEventArgs e)
+    {
+        var result = _result;
+        if (result is null)
+        {
+            _vm.StatusText = "open a video first";
+            return;
+        }
+        if (_analysisCts is { IsCancellationRequested: false })
+        {
+            _vm.StatusText = "an analysis is already running";
+            return;
+        }
+
+        // the dialog opens on the visible range, so the common case is still one click
+        var dialog = new AnalysisRangeWindow(result.DurationSeconds, _vm.ViewStart, _vm.ViewEnd)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        await AnalyseRangeAsync(dialog.RangeFrom, dialog.RangeTo);
+    }
+
+    /// <summary>Runs the deep passes over a range and keeps that range as the current setting.</summary>
+    private async Task AnalyseRangeAsync(double from, double to)
+    {
+        var result = _result;
+        if (result is null) return;
+
+        if (_analysisCts is { IsCancellationRequested: false })
+        {
+            _vm.StatusText = "an analysis is already running";
+            return;
+        }
+
+        _vm.RangeAnchor = double.NaN;
+        _vm.SetRange(from, to);
+
+        var cts = new CancellationTokenSource();
+        _analysisCts = cts;
+        _vm.IsBusy = true;
+        _vm.Progress = 0;
+        _vm.ProgressStage = $"analysing {TimelineStrip.FormatClock(from)} – {TimelineStrip.FormatClock(to)}…";
+        AppLog.Write($"range: deep pass over {from:0.###}-{to:0.###}s");
+
+        try
+        {
+            var progress = new Progress<AnalysisProgress>(p =>
+            {
+                _vm.Progress = p.Fraction;
+                _vm.ProgressStage = p.Stage;
+            });
+
+            var pipeline = new AnalysisPipeline();
+            pipeline.Updated += QueueViewRefresh;
+            await pipeline.RunDeepAsync(result, _vm.MotionAnalysisEnabled, progress, cts.Token, from, to);
+
+            if (cts.IsCancellationRequested) return;
+            int done = result.Frames.Count(f => f.QpAvg.HasValue || f.MotionMean.HasValue);
+            AppLog.Write($"range: done {from:0.###}-{to:0.###}s, {done} frames of QP / motion in the clip");
+            _vm.StatusText = $"analysed {TimelineStrip.FormatClock(from)} – {TimelineStrip.FormatClock(to)}" +
+                             $"  ·  {done} frames of QP / motion in the clip";
+        }
+        catch (OperationCanceledException)
+        {
+            AppLog.Write("range: cancelled");
+        }
+        catch (Exception ex)
+        {
+            _vm.StatusText = "range analysis failed: " + ex.Message;
+            AppLog.Write("range: failed", ex);
+        }
+        finally
+        {
+            _vm.IsBusy = false;
+            _vm.Progress = 0;
+            _vm.ProgressStage = string.Empty;
+            SaveCache();
+            ReleaseAnalysisToken(cts);
+        }
+    }
+
+    /// <summary>
+    /// Stops the deep passes and keeps everything they produced so far. The frame table, the
+    /// bitrate / GOP / reorder data and whatever QP and motion rows were already filled in stay
+    /// usable — only the remaining work is dropped.
+    /// </summary>
+    private void OnCancelAnalysisClick(object sender, RoutedEventArgs e)
+    {
+        if (_analysisCts is not { IsCancellationRequested: false }) return;
+
+        _analysisCts.Cancel();
+        int killed = ProcessRunner.KillAll(ProcessRunner.Analysis);
+        AppLog.Write($"open: cancel requested, {killed} decoder(s) killed");
     }
     private void OnDragOver(object sender, DragEventArgs e)
     {

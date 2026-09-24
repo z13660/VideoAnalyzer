@@ -55,6 +55,18 @@ public static class FfmpegLocator
         return null;
     }
 
+    private static IEnumerable<string> Subdirectories(string path)
+    {
+        try
+        {
+            return Directory.Exists(path) ? Directory.EnumerateDirectories(path) : Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
     private static IEnumerable<string> EnumerateCandidates(string windowsName, string unixName)
     {
         // 1. environment override
@@ -77,6 +89,15 @@ public static class FfmpegLocator
             yield return Path.Combine(dir.FullName, "tools", windowsName);
             yield return Path.Combine(dir.FullName, "ffmpeg", "bin", windowsName);
             yield return Path.Combine(dir.FullName, windowsName);
+
+            // A build unpacked under tools/ keeps whatever name the archive had —
+            // "ffmpeg-9.0.1-essentials_build" is the usual one — so anything one level down that
+            // looks like a build counts too.
+            foreach (var sub in Subdirectories(Path.Combine(dir.FullName, "tools")))
+            {
+                yield return Path.Combine(sub, "bin", windowsName);
+                yield return Path.Combine(sub, windowsName);
+            }
         }
 
         // 3. PATH

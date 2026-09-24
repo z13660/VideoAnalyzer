@@ -18,6 +18,11 @@ public sealed class TimelineStrip : FrameworkElement
     private static readonly Brush ChipBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x1C, 0x1F, 0x23)));
     private static readonly Brush ChipTextBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xF4, 0xF6, 0xF8)));
 
+    /// <summary>Wash over time that is outside the analysis range — nothing was measured there.</summary>
+    private static readonly Brush OutsideBrush = Freeze(new SolidColorBrush(Color.FromArgb(0xC4, 0x2A, 0x2E, 0x33)));
+    private static readonly Brush RangeEdgeBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x5B, 0x9B, 0xFF)));
+    private static readonly Brush AnchorBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xE8, 0xC0, 0x50)));
+
     private static Brush Freeze(Brush b) { b.Freeze(); return b; }
 
     private static readonly double[] NiceSteps = { 0.04, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600 };
@@ -51,6 +56,37 @@ public sealed class TimelineStrip : FrameworkElement
     public static readonly DependencyProperty PinPlayheadProperty = DependencyProperty.Register(
         nameof(PinPlayhead), typeof(bool), typeof(TimelineStrip),
         new PropertyMetadata(true));
+
+    /// <summary>Analysis range, in seconds. <c>RangeTo &lt;= RangeFrom</c> means the whole file.</summary>
+    public static readonly DependencyProperty RangeFromProperty = DependencyProperty.Register(
+        nameof(RangeFrom), typeof(double), typeof(TimelineStrip),
+        new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty RangeToProperty = DependencyProperty.Register(
+        nameof(RangeTo), typeof(double), typeof(TimelineStrip),
+        new FrameworkPropertyMetadata(-1.0, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    /// <summary>The stretches that carry QP / motion data; everything else is greyed.</summary>
+    public static readonly DependencyProperty AnalysedRunsProperty = DependencyProperty.Register(
+        nameof(AnalysedRuns), typeof(IReadOnlyList<AnalysedRun>), typeof(TimelineStrip),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    /// <summary>Start of a range that has been marked but not finished; NaN when there is none.</summary>
+    public static readonly DependencyProperty RangeAnchorProperty = DependencyProperty.Register(
+        nameof(RangeAnchor), typeof(double), typeof(TimelineStrip),
+        new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    /// <summary>Raised on a right-click, with the time under the pointer.</summary>
+    public event EventHandler<double>? RangeRequested;
+
+    public double RangeFrom { get => (double)GetValue(RangeFromProperty); set => SetValue(RangeFromProperty, value); }
+    public double RangeTo { get => (double)GetValue(RangeToProperty); set => SetValue(RangeToProperty, value); }
+    public double RangeAnchor { get => (double)GetValue(RangeAnchorProperty); set => SetValue(RangeAnchorProperty, value); }
+    public IReadOnlyList<AnalysedRun>? AnalysedRuns
+    {
+        get => (IReadOnlyList<AnalysedRun>?)GetValue(AnalysedRunsProperty);
+        set => SetValue(AnalysedRunsProperty, value);
+    }
 
     public double Position { get => (double)GetValue(PositionProperty); set => SetValue(PositionProperty, value); }
     public double ViewStart { get => (double)GetValue(ViewStartProperty); set => SetValue(ViewStartProperty, value); }
@@ -111,6 +147,13 @@ public sealed class TimelineStrip : FrameworkElement
 
         double x = e.GetPosition(this).X;
         ScrubCommit?.Invoke(this, _dragged ? DragTime(x) : _dragStartTime);
+    }
+
+    protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
+    {
+        base.OnMouseRightButtonDown(e);
+        RangeRequested?.Invoke(this, TimeAt(e.GetPosition(this).X));
+        e.Handled = true;
     }
 
     protected override void OnMouseWheel(MouseWheelEventArgs e)
@@ -182,6 +225,50 @@ public sealed class TimelineStrip : FrameworkElement
             var ft = Txt.Make(FormatTick(t, step), 11.5, LabelBrush, dpi);
             double tx = Math.Clamp(x - ft.Width / 2, 1, Math.Max(1, w - ft.Width - 1));
             dc.DrawText(ft, new Point(tx, 2));
+        }
+
+        // Grey everything that has not been measured. Driven by the data rather than by the
+        // range setting: after a cancelled pass, or after the range is cleared, the rows are
+        // still empty and the shading has to say so. Drawn before the playhead so the line
+        // stays readable on top of the wash.
+        var runs = AnalysedRuns;
+        if (runs is { Count: > 0 })
+        {
+            double x = 0;
+            foreach (var run in runs)
+            {
+                double from = Math.Clamp((run.From - ViewStart) / span * w, 0, w);
+                double to = Math.Clamp((run.To - ViewStart) / span * w, 0, w);
+
+                if (from > x) dc.DrawRectangle(OutsideBrush, null, new Rect(x, 0, from - x, h));
+                if (to > x) x = to;
+            }
+            if (x < w) dc.DrawRectangle(OutsideBrush, null, new Rect(x, 0, w - x, h));
+        }
+
+        // the range the next pass would cover, when one is set
+        if (RangeTo > RangeFrom + 0.05)
+        {
+            double r0 = (RangeFrom - ViewStart) / span * w;
+            double r1 = (RangeTo - ViewStart) / span * w;
+            dc.DrawRectangle(RangeEdgeBrush, null, new Rect(Math.Clamp(r0, 0, Math.Max(0, w - 1)), 0, 1, h));
+            dc.DrawRectangle(RangeEdgeBrush, null, new Rect(Math.Clamp(r1 - 1, 0, Math.Max(0, w - 1)), 0, 1, h));
+        }
+
+        // a range whose start has been marked but whose end has not
+        double anchor = RangeAnchor;
+        if (!double.IsNaN(anchor))
+        {
+            double ax = (anchor - ViewStart) / span * w;
+            if (ax >= -1 && ax <= w + 1)
+            {
+                dc.DrawRectangle(AnchorBrush, null, new Rect(Math.Clamp(ax - 1, 0, Math.Max(0, w - 2)), 0, 2, h));
+
+                var tag = Txt.Make("起点", 11, ChipTextBrush, dpi);
+                double tagX = Math.Clamp(ax + 4, 0, Math.Max(0, w - tag.Width - 8));
+                dc.DrawRectangle(ChipBrush, null, new Rect(tagX, 2, tag.Width + 8, tag.Height + 2));
+                dc.DrawText(tag, new Point(tagX + 4, 3));
+            }
         }
 
         double px = (Position - ViewStart) / span * w;

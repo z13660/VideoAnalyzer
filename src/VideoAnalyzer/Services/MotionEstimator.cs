@@ -35,8 +35,10 @@ public static class MotionEstimator
 
     private static readonly (int dx, int dy)[] Offsets = BuildOffsets();
 
-    public static async Task RunAsync(AnalysisResult result, Action<double>? progress, CancellationToken ct)
+    public static async Task RunAsync(
+        AnalysisResult result, Action<double>? progress, CancellationToken ct, DeepAnalysisService.Slice slice = default)
     {
+        if (slice.Last < slice.First) slice = DeepAnalysisService.Slice.Of(result, 0, -1);
         var exe = FfmpegLocator.FfmpegPath
                   ?? throw new InvalidOperationException("ffmpeg was not found.");
 
@@ -49,7 +51,9 @@ public static class MotionEstimator
         if (smallH % 2 != 0) smallH++;
         double scale = media.Width / (double)smallW;
 
-        var args = $"-v error -hide_banner -i \"{media.FilePath}\" -an " +
+        // The slice is a seek plus a duration: the pipe only carries what ffmpeg decided to
+        // output, so the first frame on it is the slice's first frame.
+        var args = $"-v error -hide_banner {slice.InputArgs}-i \"{media.FilePath}\" {slice.OutputArgs}-an " +
                    $"-vf \"scale={smallW}:{smallH}:flags=fast_bilinear,format=gray\" " +
                    $"-f rawvideo -pix_fmt gray -fps_mode passthrough pipe:1";
 
@@ -67,15 +71,15 @@ public static class MotionEstimator
 
         await Task.Run(async () =>
         {
-            using var p = ProcessRunner.Start(exe, args);
+            using var p = ProcessRunner.Start(exe, args, ProcessRunner.Analysis);
             _ = p.StandardError.ReadToEndAsync(ct);
             var stream = p.StandardOutput.BaseStream;
 
             void Flush()
             {
                 Match(results, pending, smallW, smallH, scale);
-                applied = ApplyResults(results, applied, frames);
-                progress?.Invoke(Math.Min(1.0, applied / (double)Math.Max(1, frames.Count)));
+                applied = ApplyResults(results, applied, frames, slice.First);
+                progress?.Invoke(Math.Min(1.0, applied / (double)Math.Max(1, slice.Count)));
             }
 
             // Each decoded frame gets its own buffer. A frame stays alive until the batches
@@ -153,7 +157,7 @@ public static class MotionEstimator
         // The decoder emits frames in presentation order. The first trio the matcher can
         // resolve is (0, 1, 2) and it describes frame 1, so results are offset by one
         // against the frame table.
-        applied = ApplyResults(results, applied, frames);
+        applied = ApplyResults(results, applied, frames, slice.First);
         progress?.Invoke(1.0);
     }
 
@@ -162,11 +166,11 @@ public static class MotionEstimator
     /// returns the new watermark. Called after every batch so the graphs have something to show
     /// long before the pass is over.
     /// </summary>
-    private static int ApplyResults(List<FrameMotion> results, int from, List<FrameInfo> frames)
+    private static int ApplyResults(List<FrameMotion> results, int from, List<FrameInfo> frames, int sliceStart)
     {
         for (int i = from; i < results.Count; i++)
         {
-            int frameIndex = i + 1;
+            int frameIndex = sliceStart + i + 1;
             if (frameIndex >= frames.Count) break;
 
             var s = results[i];
