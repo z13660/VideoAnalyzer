@@ -1,0 +1,113 @@
+name: build
+
+# Builds on every push, and turns a version tag into a release with two downloads:
+#
+#   VideoAnalyzer-<version>-win-x64.zip              the program on its own
+#   VideoAnalyzer-<version>-win-x64-with-ffmpeg.zip  self contained, ffmpeg included
+#
+# The project is WPF, so the runner has to be Windows.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PROJECT: src/VideoAnalyzer
+  RUNTIME: win-x64
+  # gyan.dev's release build is what the README points at. It is refreshed often, so the
+  # version that ends up bundled is whatever was current when the release was cut; the fetch
+  # step prints it.
+  FFMPEG_URL: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          # global.json asks for 8.0.421 with rollForward latestFeature, so any 8.0.4xx
+          # band SDK satisfies it.
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build ${{ env.PROJECT }} -c Release --nologo
+
+      # ---- 1. the program on its own: needs the .NET 8 runtime and a copy of ffmpeg ------
+      - name: Publish (program only)
+        run: >
+          dotnet publish ${{ env.PROJECT }} -c Release -r ${{ env.RUNTIME }}
+          --self-contained false -o publish/only --nologo
+
+      # ---- 2. with ffmpeg: unpack and run -------------------------------------------------
+      # The csproj copies tools/ffmpeg/bin next to the executable when it is there, so this has
+      # to happen after the publish above and before the one below.
+      - name: Fetch ffmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri '${{ env.FFMPEG_URL }}' -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-dl -Force
+
+          $ffmpeg = Get-ChildItem ffmpeg-dl -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Path tools/ffmpeg/bin -Force | Out-Null
+          Copy-Item $ffmpeg.FullName tools/ffmpeg/bin/
+          Copy-Item (Join-Path $ffmpeg.DirectoryName 'ffprobe.exe') tools/ffmpeg/bin/
+
+          & tools/ffmpeg/bin/ffmpeg.exe -version | Select-Object -First 1
+          Remove-Item ffmpeg.zip, ffmpeg-dl -Recurse -Force
+
+      - name: Publish (with ffmpeg, self contained)
+        run: >
+          dotnet publish ${{ env.PROJECT }} -c Release -r ${{ env.RUNTIME }}
+          --self-contained true -o publish/full --nologo
+
+      - name: Package both
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME -replace '^v', '' } else { 'dev' }
+
+          $plain = "VideoAnalyzer-$version-${{ env.RUNTIME }}"
+          New-Item -ItemType Directory -Path $plain -Force | Out-Null
+          Copy-Item -Path publish/only/* -Destination $plain -Recurse
+          Copy-Item -Path docs/README-FIRST.txt -Destination $plain
+          Compress-Archive -Path $plain -DestinationPath "$plain.zip" -Force
+
+          $full = "VideoAnalyzer-$version-${{ env.RUNTIME }}-with-ffmpeg"
+          New-Item -ItemType Directory -Path $full -Force | Out-Null
+          Copy-Item -Path publish/full/* -Destination $full -Recurse
+          Copy-Item -Path docs/README-FIRST-with-ffmpeg.txt -Destination $full
+          Compress-Archive -Path $full -DestinationPath "$full.zip" -Force
+
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Get-ChildItem "$plain.zip", "$full.zip" |
+            Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } }
+
+      - name: Upload both builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoAnalyzer-${{ env.RUNTIME }}
+          path: VideoAnalyzer-*-${{ env.RUNTIME }}*.zip
+          if-no-files-found: error
+
+      # A tag is the release: v1.0.1 -> the two zips above
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $plain = (Get-Item "VideoAnalyzer-$env:VERSION-${{ env.RUNTIME }}.zip").FullName
+          $full  = (Get-Item "VideoAnalyzer-$env:VERSION-${{ env.RUNTIME }}-with-ffmpeg.zip").FullName
+
+          gh release create $env:GITHUB_REF_NAME $plain $full `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "VideoAnalyzer $env:VERSION" `
+            --notes-file docs/release-notes.md
