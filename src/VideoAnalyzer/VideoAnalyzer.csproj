@@ -9,7 +9,7 @@
     <LangVersion>12.0</LangVersion>
     <AssemblyName>VideoAnalyzer</AssemblyName>
     <RootNamespace>VideoAnalyzer</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Product>VideoAnalyzer</Product>
     <Description>Frame-accurate video stream analyzer (QCTools style) built on ffmpeg.</Description>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
