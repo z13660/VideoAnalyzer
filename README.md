@@ -46,6 +46,8 @@ no third-party libraries: the whole application is .NET 8 + WPF.
 | **Audio** | Raw PCM through `waveOut`, software volume, measured A/V offset ~0.2 s |
 | **Live frame record** | Type, size, QP, motion, GOP position, reorder delta and flags for the frame under the playhead |
 | **Full screen** | Double-click the picture and the window hands itself over to the video |
+| **Part of a clip** | Mark or type a range and only that stretch is decoded; ranges accumulate, and the time between them is shaded as unmeasured |
+| **Stoppable analysis** | 取消分析 stops the deep passes and keeps everything they had already produced |
 
 ### The graph stack
 
@@ -104,6 +106,32 @@ Stages 3 and 4 **run at the same time** — separate decoders, different fields 
 record — so the deep pass costs the slower of the two rather than their sum. Both publish as
 they go, so the graphs fill in while the analysis is still running.
 
+### Analysing part of a clip
+
+The deep passes take a range, which is what makes a two hour recording workable: mark a stretch
+on the ruler (right-click twice) or type the two times in, and only that part is decoded. The
+passes are handed a seek and a duration and the parsed results are shifted back onto the whole
+frame table — with **two different offsets**, because a `-debug qp` dump also covers the key
+frame the decoder had to start from while a rawvideo pipe only carries what ffmpeg decided to
+output. Gap filling and type inference are clamped to the same range, so nothing outside it is
+invented.
+
+Ranges accumulate: analysing 5–15 s and then 18–28 s leaves both in the frame table, and the
+graphs shade the gap between them — the shading follows the contiguous runs of frames that
+actually carry data rather than the outermost pair, so an unmeasured stretch is never painted as
+done. Bitrate, GOP and reorder come from the packet table and always cover the whole file, so
+those rows are never shaded.
+
+![Two ranges analysed, with the gap between them shaded](docs/analysing-a-range.png)
+
+*Two ranges analysed one after the other on a 60 s clip: the QP and motion rows carry data in
+5–15 s and 18–28 s, and the time between them is shaded because nothing has been measured there.
+The three packet-table rows above and below are untouched.*
+
+A pass can be stopped part way, and what it had already produced stays usable. Results are also
+held in memory for the files opened most recently, so switching back to one does not decode it
+again; nothing is written to disk.
+
 ---
 
 ## Requirements
@@ -117,7 +145,9 @@ ffmpeg is looked up in this order, so any one of these works:
 
 1. the `FFMPEG_HOME` environment variable
 2. `tools\ffmpeg\bin\` beside the executable, or in any of the nine parent directories
-3. anywhere on `PATH`
+3. anything one folder down inside `tools/` at those levels — an unpacked build keeps whatever
+   name the archive had, `ffmpeg-9.0.1-essentials_build` being the usual one
+4. anywhere on `PATH`
 4. the usual install locations (`C:\ffmpeg\bin`, chocolatey, WinGet links)
 
 If nothing is found the app offers a file picker on startup. The simplest setup is to unpack a
@@ -177,6 +207,9 @@ dotnet publish src/VideoAnalyzer -c Release -r win-x64 --self-contained false -o
 |---|---|
 | Click a graph or the timeline | Seek to the point clicked |
 | Drag a graph or the timeline | Scrub — the strip is grabbed and the content travels with the cursor |
+| Right-click the timeline | Mark an analysis range: the first click sets the start, the second sets the end and analyses that stretch. Another right-click starts a new range, and the earlier results stay |
+| 分析范围… | Type the two times instead; the dialog opens on the visible range, and 用当前视图 puts it back |
+| 取消分析 | Stop the deep passes and keep what they have already produced |
 | Wheel over a graph or the timeline | Zoom around the cursor |
 | Double-click the picture | Full screen; double-click again (or `Esc`) to leave |
 
@@ -251,6 +284,9 @@ tools/                       verification and capture helpers (Python)
   filmstrip holds ~240 thumbnails, so a long clip costs a few tens of MB during analysis.
 * Audio is decoded at a fixed 48 kHz stereo 16-bit and there is no audio *analysis* — no
   loudness or level metering, only playback.
+* A range pass finishes a frame or two short of its end: the decoder is stopped by the duration
+  it was given, so the last frame's QP comes from gap filling rather than from the dump. The band
+  looks right; only the current-value readout on that one frame is approximate.
 * Windows only: the playback engine, audio output and window chrome are Win32/WPF specific.
 
 ## License
