@@ -44,7 +44,8 @@
     <None Include="$(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffmpeg.exe;
                    $(MSBuildProjectDirectory)\..\..\tools\ffmpeg\bin\ffprobe.exe">
       <Link>tools\ffmpeg\bin\%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <!-- Publish only: copying 200 MB into bin/ on every ordinary build would make the edit
+           and build loop unusable, and nothing needs the toolchain beside a debug binary. -->
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
   </ItemGroup>
